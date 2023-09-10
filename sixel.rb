@@ -1,4 +1,4 @@
-N = 5
+N = 4
 SENSIVITY = (N * N).times.map { _1 * 51 / (N * N) }.shuffle
 def sixel(image, palette = nil)
   header = "\ePq"
@@ -44,6 +44,14 @@ def sixel(image, palette = nil)
     output << linedata << '-'
   end
   [output, footer].join
+end
+
+if ARGV[0]
+  require 'chunky_png'
+  image = ChunkyPNG::Image.from_file(ARGV[0])
+  sixel_data = sixel(image.pixels.map{_1>>8}.each_slice(image.width).to_a)
+  puts sixel_data
+  exit
 end
 
 def create_rgb_image(w, h, t)
