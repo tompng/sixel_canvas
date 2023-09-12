@@ -1,25 +1,63 @@
+require_relative 'sixel'
+
 class Canvas
+  TERMINAL_CLEAR_SCREEN = "\e[H\e[2J"
+  TERMINAL_CURSOR_RESET = "\e[H"
+
   attr_reader :width, :height, :pixels, :color, :line_width
-  def initialize(width, height)
+  def initialize(width, height, colors: nil, antialias: 2)
     @width = width
     @height = height
-    @color = 1.0
+    if @colors
+      @color = 1.0
+    else
+      @color = 0xffffff
+    end
     @alpha = 1.0
-    @antialias = 2
+    @antialias = antialias.to_i.clamp 1, 4
+    @colors = colors
     @pixels = @height.times.map do
-      [0.0] * @width
+      [@colors ? 0.0 : 0] * @width
     end
   end
 
-  def clear(color = 0)
-    color = color.clamp(0, 1).to_f
-    @pixels.each do |row|
-      row.fill color
+  def clear(color = 0, alpha: 1)
+    alpha = alpha.clamp(0, 1).to_f
+    if @colors
+      color = color.clamp(0, 1).to_f
+      @pixels.each do |row|
+        row.map! do |c|
+          c * (1 - alpha) + color * alpha
+        end
+      end
+    else
+      color = color.to_i
+      cr = (color >> 16) & 0xff
+      cg = (color >> 8) & 0xff
+      cb = color & 0xff
+      @pixels.each do |row|
+        row.map! do |c|
+          r = (c >> 16) & 0xff
+          g = (c >> 8) & 0xff
+          b = c & 0xff
+          r = r * (1 - alpha) + cr * alpha
+          g = g * (1 - alpha) + cg * alpha
+          b = b * (1 - alpha) + cb * alpha
+          (r.round << 16) | (g.round << 8) | b.round
+        end
+      end
     end
   end
 
   def color=(color)
-    @color = color.clamp(0, 1).to_f
+    if @colors
+      @color = color.clamp(0, 1).to_f
+    else
+      @color = color.to_i
+      @r = (@color >> 16) & 0xff
+      @g = (@color >> 8) & 0xff
+      @b = @color & 0xff
+    end
   end
 
   def alpha=(alpha)
@@ -41,9 +79,10 @@ class Canvas
     bx, by = pb.map { _1 * @antialias }
     cx, cy = pc.map { _1 * @antialias }
     dx, dy = pd.map { _1 * @antialias }
-    dab = Math.hypot (bx - ax).abs, (by - ay).abs
-    dcd = Math.hypot (dx - cx).abs, (dy - cy).abs
-    step = ([dab, dcd].max * 3).ceil
+    dab = [(bx - ax).abs, (by - ay).abs].max
+    dcd = [(dx - cx).abs, (dy - cy).abs].max
+    dad = [(dx - ax).abs, (dy - ay).abs].max
+    step = [3 * dab, 3 * dcd, 1.5 * dad, 1].max.ceil
     x0 = ax
     x1 = 3 * (bx - ax)
     x2 = 3 * (ax - 2 * bx + cx)
@@ -78,7 +117,7 @@ class Canvas
   def _line_path(p1, p2, points)
     x1, y1 = p1.map { _1 * @antialias }
     x2, y2 = p2.map { _1 * @antialias }
-    step = [(x2 - x1).abs, (y2 - y1).abs].max
+    step = [(x2 - x1).abs, (y2 - y1).abs, 1].max
     (0..step).each do |i|
       t = i.fdiv step
       x = (x1 + (x2 - x1) * t).round
@@ -154,15 +193,35 @@ class Canvas
         end
       end
     end
-    updates.each do |(x, y), count|
-      alpha = @alpha * count / @antialias**2
-      @pixels[y][x] = @pixels[y][x] * (1 - alpha) + @color * alpha
+    if @colors
+      updates.each do |(x, y), count|
+        alpha = @alpha * count / @antialias**2
+        @pixels[y][x] = @pixels[y][x] * (1 - alpha) + @color * alpha
+      end
+    else
+      updates.each do |(x, y), count|
+        alpha = @alpha * count / @antialias**2
+        col = @pixels[y][x]
+        r = (col >> 16) & 0xff
+        g = (col >> 8) & 0xff
+        b = col & 0xff
+        r = r * (1 - alpha) + @r * alpha
+        g = g * (1 - alpha) + @g * alpha
+        b = b * (1 - alpha) + @b * alpha
+        @pixels[y][x] = (r.round << 16) | (g.round << 8) | b.round
+      end
     end
   end
 
-  def to_int_pixel(max)
-    @pixels.map do |row|
-      row.map { (_1 * max).round }
+  def to_sixel
+    if @colors
+      max_color_index = @colors.size - 1
+      image = @pixels.map do |row|
+        row.map { (_1 * max_color_index).round }
+      end
+      Sixel.build image, @colors
+    else
+      Sixel.build @pixels
     end
   end
 end
