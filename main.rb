@@ -6,6 +6,8 @@ canvas.line_width = 10
 canvas.draw_line [140, 100], [310, 130]
 canvas.draw_line [210, 360], [150, 240]
 canvas.draw_line [300, 200], [130, 320]
+canvas.draw_bezier [30, 30], [100, 200], [300, 100], [360, 360]
+
 color_palette = 100.times.map { (_1 * 255 / 100) * 0x010101 }
 puts Sixel.build canvas.to_int_pixel(100 - 1), color_palette
 exit
