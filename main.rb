@@ -1,7 +1,7 @@
 require_relative 'sixel'
 require_relative 'canvas'
 
-canvas = Canvas.new 400, 400
+canvas = Canvas.new 240, 240
 color_palette = 100.times.map do |i|
   t = i.fdiv 100 - 1
   r, g, b = [t**3, t**2, t].map { (_1 * 255).round }
@@ -14,7 +14,7 @@ loop do
   canvas.color = 1
   canvas.line_width = 4
   canvas.line [rand(100), 100], [30, 130]
-  canvas.line_width = 8
+  canvas.line_width = 16
   canvas.line [110, 160], [150, 40]
   canvas.line [30, 20], [130, 120]
   canvas.bezier [30, rand(180)], [100, rand(180)], [rand(180), 40], [160, 160]
