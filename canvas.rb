@@ -175,90 +175,91 @@ class Canvas
   end
 
   def _stroke(points, radius)
-    y_by_x = {}
-    x_bounds = []
+    x_by_y = {}
+    y_bounds = []
     radius_i = radius.ceil
     points.each do |x, y|
-      (y_by_x[x] ||= {})[y] = true
-      x_bounds << x - radius_i
-      x_bounds << x + radius_i + 0.5
+      (x_by_y[y] ||= {})[x] = true
+      y_bounds << y - radius_i
+      y_bounds << y + radius_i + 0.5
     end
-    pixel_x_set = {}
-    each_merged_range_value x_bounds do |target_x|
-      x = target_x / @antialias
-      pixel_x_set[x] = true if 0 <= x && x < @width
+    pixel_y_set = {}
+    each_merged_range_value y_bounds do |target_y|
+      y = target_y / @antialias
+      pixel_y_set[y] = true if 0 <= y && y < @height
     end
-    pixel_x_set.each_key do |pixel_x|
-      antialias_y_bounds = @antialias.times.map do |i|
-        target_x = pixel_x * @antialias + i
-        y_bounds = []
-        (-radius_i..radius_i).each do |dx|
-          ys = y_by_x[target_x + dx]
-          next unless ys
+    pixel_y_set.each_key do |pixel_y|
+      pixels_row = @pixels[pixel_y]
+      antialias_x_bounds = @antialias.times.map do |i|
+        target_y = pixel_y * @antialias + i
+        x_bounds = []
+        (-radius_i..radius_i).each do |dy|
+          xs = x_by_y[target_y + dy]
+          next unless xs
 
-          dy2 = (radius + 0.5)**2 - dx**2
-          next unless dy2 > 0
+          dx2 = (radius + 0.5)**2 - dy**2
+          next unless dx2 > 0
 
-          dy = Math.sqrt(dy2).floor
-          ys.each_key do |y|
-            y_bounds << y - dy
-            y_bounds << y + dy + 0.5
+          dx = Math.sqrt(dx2).floor
+          xs.each_key do |x|
+            x_bounds << x - dx
+            x_bounds << x + dx + 0.5
           end
         end
-        compact_y_bounds = []
-        each_overlapped_range y_bounds do
-          compact_y_bounds << _1
-          compact_y_bounds << _2 + 0.5
+        compact_x_bounds = []
+        each_overlapped_range x_bounds do
+          compact_x_bounds << _1
+          compact_x_bounds << _2 + 0.5
         end
-        compact_y_bounds
+        compact_x_bounds
       end
       subtract_bounds = []
       updates = Hash.new 0
-      each_overlapped_range antialias_y_bounds.flatten, @antialias do |y_from_a, y_to_a|
-        y_from = (y_from_a + @antialias - 1) / @antialias
-        y_to = (y_to_a - @antialias) / @antialias
-        subtract_bounds << y_from * @antialias
-        subtract_bounds << (y_to + 1) * @antialias + 0.5
-        next if y_to < 0 || y_from >= @height
-        ([y_from, 0].max..[y_to, @height - 1].min).each do |y|
-          updates[y] = @antialias_area if y >= 0 && y < @height
+      each_overlapped_range antialias_x_bounds.flatten, @antialias do |x_from_a, x_to_a|
+        x_from = (x_from_a + @antialias - 1) / @antialias
+        x_to = (x_to_a - @antialias) / @antialias
+        subtract_bounds << x_from * @antialias
+        subtract_bounds << (x_to + 1) * @antialias + 0.5
+        next if x_to < 0 || x_from >= @width
+        ([x_from, 0].max..[x_to, @width - 1].min).each do |x|
+          updates[x] = @antialias_area if x >= 0 && x < @width
         end
       end
-      antialias_y_bounds.each do |y_bounds|
-        each_subtract_range y_bounds, subtract_bounds do |y_from_a, y_to_a|
-          y_from_a = y_from_a.clamp 0, @height * @antialias
-          y_to_a = y_to_a.clamp 0, @height * @antialias
-          y_from = y_from_a / @antialias
-          y_to = (y_to_a - 1) / @antialias
-          next if y_to < 0 || y_from >= @height
+      antialias_x_bounds.each do |x_bounds|
+        each_subtract_range x_bounds, subtract_bounds do |x_from_a, x_to_a|
+          x_from_a = x_from_a.clamp 0, @height * @antialias
+          x_to_a = x_to_a.clamp 0, @height * @antialias
+          x_from = x_from_a / @antialias
+          x_to = (x_to_a - 1) / @antialias
+          next if x_to < 0 || x_from >= @height
 
-          (y_from + 1..y_to - 1).each do |y|
-            updates[y] += @antialias
+          (x_from + 1..x_to - 1).each do |x|
+            updates[x] += @antialias
           end
-          if y_from == y_to
-            updates[y_from] += y_to_a - y_from_a
+          if x_from == x_to
+            updates[x_from] += x_to_a - x_from_a
           else
-            updates[y_from] += @antialias - y_from_a % @antialias
-            updates[y_to] += (y_to_a - 1) % @antialias + 1
+            updates[x_from] += @antialias - x_from_a % @antialias
+            updates[x_to] += (x_to_a - 1) % @antialias + 1
           end
         end
       end
       if @colors
-        updates.each do |y, count|
+        updates.each do |x, count|
           alpha = @alpha * count / @antialias_area
-          @pixels[y][pixel_x] = @pixels[y][pixel_x] * (1 - alpha) + @color * alpha
+          pixels_row[x] = pixels_row[x] * (1 - alpha) + @color * alpha
         end
       else
-        updates.each do |y, count|
+        updates.each do |x, count|
           alpha = @alpha * count / @antialias_area
-          col = @pixels[y][pixel_x]
+          col = pixels_row[x]
           r = (col >> 16) & 0xff
           g = (col >> 8) & 0xff
           b = col & 0xff
           r = r * (1 - alpha) + @r * alpha
           g = g * (1 - alpha) + @g * alpha
           b = b * (1 - alpha) + @b * alpha
-          @pixels[y][pixel_x] = (r.round << 16) | (g.round << 8) | b.round
+          pixels_row[x] = (r.round << 16) | (g.round << 8) | b.round
         end
       end
     end
