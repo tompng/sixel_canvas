@@ -5,17 +5,19 @@ class Canvas
   TERMINAL_CURSOR_RESET = "\e[H"
 
   attr_reader :width, :height, :pixels, :color, :line_width
-  def initialize(width, height, colors: nil, antialias: 2)
+  def initialize(width, height, colors: nil, antialias: 3)
     @width = width
     @height = height
+    @colors = colors
     if @colors
       @color = 1.0
     else
       @color = 0xffffff
     end
     @alpha = 1.0
-    @antialias = antialias.to_i.clamp 1, 4
-    @colors = colors
+    @line_width = 1.0
+    @antialias = antialias.to_i.clamp 1, 8
+    @antialias_area = @antialias**2
     @pixels = @height.times.map do
       [@colors ? 0.0 : 0] * @width
     end
@@ -126,26 +128,49 @@ class Canvas
     end
   end
 
-  def each_merged_range(bounds)
+  def each_overlapped_range(bounds, overlaps = 1)
     return if bounds.empty?
     level = 0
     prev = 0
     bounds.sort.each do |v|
-      if v % 1 == 0 # range begin
-        prev = v if level == 0
+      if v % 1 == 0 # v % 1 == 0 is range begin
         level += 1
-      else # range end
-        level -= 1
-        if level == 0
+        prev = v if level == overlaps
+      else # v % 1 == 0.5 is range end
+        if level == overlaps
           yield prev, v.ceil
         end
+        level -= 1
+      end
+    end
+  end
+
+  def each_subtract_range(target_bounds, sub_bounds)
+    bounds = target_bounds + sub_bounds.map { _1 + (_1 % 1) * 0.5 - 0.125 }
+    level = 0
+    sub_level = 0
+    prev = 0
+    bounds.sort.each do |v|
+      case v % 1
+      when 0
+        prev = v if level == 0 && sub_level == 0
+        level += 1
+      when 0.5
+        level -= 1
+        yield prev.ceil, v.ceil if level == 0 && sub_level == 0
+      when 0.625
+        sub_level -= 1
+        prev = v if level > 0 && sub_level == 0
+      when 0.875
+        yield prev.ceil, v.ceil if level > 0 && sub_level == 0
+        sub_level += 1
       end
     end
   end
 
   def each_merged_range_value(bounds)
-    each_merged_range bounds do |from, to|
-      (from...to).each { yield _1}
+    each_overlapped_range bounds do |from, to|
+      (from...to).each { yield _1 }
     end
   end
 
@@ -158,57 +183,83 @@ class Canvas
       x_bounds << x - radius_i
       x_bounds << x + radius_i + 0.5
     end
-    updates = Hash.new 0
+    pixel_x_set = {}
     each_merged_range_value x_bounds do |target_x|
-      next if target_x < 0 || target_x >= @width * @antialias
-      y_bounds = []
-      (-radius_i..radius_i).each do |dx|
-        ys = y_by_x[target_x + dx]
-        next unless ys
-
-        dy2 = (radius + 0.5)**2 - dx**2
-        next unless dy2 > 0
-
-        dy = Math.sqrt(dy2).floor
-        ys.each_key do |y|
-          y_bounds << y - dy
-          y_bounds << y + dy + 0.5
-        end
-      end
-      each_merged_range y_bounds do |y_from_a, y_to_a|
-        y_from_a = y_from_a.clamp 0, @height * @antialias
-        y_to_a = y_to_a.clamp 0, @height * @antialias
-        y_from = y_from_a / @antialias
-        y_to = (y_to_a - 1) / @antialias
-        next if y_from >= @height
-
-        (y_from + 1..y_to - 1).each do |y|
-          updates[[target_x / @antialias, y]] += @antialias
-        end
-        if y_from == y_to
-          updates[[target_x / @antialias, y_from]] += y_to_a - y_from_a
-        else
-          updates[[target_x / @antialias, y_from]] += @antialias - y_from_a % @antialias
-          updates[[target_x / @antialias, y_to]] += (y_to_a - 1) % @antialias + 1
-        end
-      end
+      x = target_x / @antialias
+      pixel_x_set[x] = true if 0 <= x && x < @width
     end
-    if @colors
-      updates.each do |(x, y), count|
-        alpha = @alpha * count / @antialias**2
-        @pixels[y][x] = @pixels[y][x] * (1 - alpha) + @color * alpha
+    pixel_x_set.each_key do |pixel_x|
+      antialias_y_bounds = @antialias.times.map do |i|
+        target_x = pixel_x * @antialias + i
+        y_bounds = []
+        (-radius_i..radius_i).each do |dx|
+          ys = y_by_x[target_x + dx]
+          next unless ys
+
+          dy2 = (radius + 0.5)**2 - dx**2
+          next unless dy2 > 0
+
+          dy = Math.sqrt(dy2).floor
+          ys.each_key do |y|
+            y_bounds << y - dy
+            y_bounds << y + dy + 0.5
+          end
+        end
+        compact_y_bounds = []
+        each_overlapped_range y_bounds do
+          compact_y_bounds << _1
+          compact_y_bounds << _2 + 0.5
+        end
+        compact_y_bounds
       end
-    else
-      updates.each do |(x, y), count|
-        alpha = @alpha * count / @antialias**2
-        col = @pixels[y][x]
-        r = (col >> 16) & 0xff
-        g = (col >> 8) & 0xff
-        b = col & 0xff
-        r = r * (1 - alpha) + @r * alpha
-        g = g * (1 - alpha) + @g * alpha
-        b = b * (1 - alpha) + @b * alpha
-        @pixels[y][x] = (r.round << 16) | (g.round << 8) | b.round
+      subtract_bounds = []
+      updates = Hash.new 0
+      each_overlapped_range antialias_y_bounds.flatten, @antialias do |y_from_a, y_to_a|
+        y_from = (y_from_a + @antialias - 1) / @antialias
+        y_to = (y_to_a - @antialias) / @antialias
+        subtract_bounds << y_from * @antialias
+        subtract_bounds << (y_to + 1) * @antialias + 0.5
+        next if y_to < 0 || y_from >= @height
+        ([y_from, 0].max..[y_to, @height - 1].min).each do |y|
+          updates[y] = @antialias_area if y >= 0 && y < @height
+        end
+      end
+      antialias_y_bounds.each do |y_bounds|
+        each_subtract_range y_bounds, subtract_bounds do |y_from_a, y_to_a|
+          y_from_a = y_from_a.clamp 0, @height * @antialias
+          y_to_a = y_to_a.clamp 0, @height * @antialias
+          y_from = y_from_a / @antialias
+          y_to = (y_to_a - 1) / @antialias
+          next if y_to < 0 || y_from >= @height
+
+          (y_from + 1..y_to - 1).each do |y|
+            updates[y] += @antialias
+          end
+          if y_from == y_to
+            updates[y_from] += y_to_a - y_from_a
+          else
+            updates[y_from] += @antialias - y_from_a % @antialias
+            updates[y_to] += (y_to_a - 1) % @antialias + 1
+          end
+        end
+      end
+      if @colors
+        updates.each do |y, count|
+          alpha = @alpha * count / @antialias_area
+          @pixels[y][pixel_x] = @pixels[y][pixel_x] * (1 - alpha) + @color * alpha
+        end
+      else
+        updates.each do |y, count|
+          alpha = @alpha * count / @antialias_area
+          col = @pixels[y][pixel_x]
+          r = (col >> 16) & 0xff
+          g = (col >> 8) & 0xff
+          b = col & 0xff
+          r = r * (1 - alpha) + @r * alpha
+          g = g * (1 - alpha) + @g * alpha
+          b = b * (1 - alpha) + @b * alpha
+          @pixels[y][pixel_x] = (r.round << 16) | (g.round << 8) | b.round
+        end
       end
     end
   end
