@@ -10,9 +10,9 @@ class Canvas
     @height = height
     @colors = colors
     if @colors
-      @color = 1.0
+      self.color = 1.0
     else
-      @color = 0xffffff
+      self.color = 0xffffff
     end
     @alpha = 1.0
     @line_width = 1.0
@@ -174,6 +174,119 @@ class Canvas
     end
   end
 
+  def compact_xor_range(xor_bounds)
+    ranges = []
+    prev = -1
+    fill = false
+    xor_bounds.sort.each do |v|
+      if fill
+        if ranges.last&.last == prev
+          ranges.last[1] = v
+        else
+          ranges << [prev, v]
+        end
+        prev = v
+        fill = false
+      else
+        prev = v
+        fill = true
+      end
+    end
+    ranges
+  end
+
+  def _fill(points)
+    row_xor_bounds_a = {}
+    dedup_points = []
+    points.each do |p|
+      dedup_points << p if dedup_points.last != p
+    end
+    dedup_points.pop while dedup_points.first == dedup_points.last
+    return if dedup_points.empty?
+
+    dedup_points.size.times do |i|
+      x1, y1 = dedup_points[i - 1]
+      x2, y2 = dedup_points[i]
+      step = (y2 - y1).abs
+      (1...step).each do |j|
+        c1 = 2 * (step - j)
+        c2 = 2 * j
+        x = (c1 * x1 + c2 * x2 + step) / step / 2
+        y = (c1 * y1 + c2 * y2 + step) / step / 2
+        (row_xor_bounds_a[y] ||= []) << x
+      end
+      x0, y0 = dedup_points[i - 2]
+      if (y0 != y1 || y1 != y2) && ((y1 - y0) * (y2 - y1) > 0 || (y0 == y1 && ((x0 < x1) ^ (y1 < y2))) || (y1 == y2 && ((x1 > x2) ^ (y0 < y1))))
+        (row_xor_bounds_a[y1] ||= []) << x1
+      end
+    end
+    row_bounds = {}
+    row_xor_bounds_a.each do |y_a, xor_bounds|
+      x_bounds = []
+      compact_xor_range(xor_bounds).each do |from, to|
+        x_bounds << from
+        x_bounds << to + 0.5
+      end
+      (row_bounds[y_a / @antialias] ||= []) << x_bounds
+    end
+    row_bounds.each do |pixel_y, antialias_x_bounds|
+      _fill_antialias_bounds(pixel_y, antialias_x_bounds)
+    end
+  end
+
+  def _fill_antialias_bounds(pixel_y, antialias_x_bounds)
+    pixels_row = @pixels[pixel_y]
+    subtract_bounds = []
+    updates = Hash.new 0
+    each_overlapped_range antialias_x_bounds.flatten, @antialias do |x_from_a, x_to_a|
+      x_from = (x_from_a + @antialias - 1) / @antialias
+      x_to = (x_to_a - @antialias) / @antialias
+      subtract_bounds << x_from * @antialias
+      subtract_bounds << (x_to + 1) * @antialias + 0.5
+      next if x_to < 0 || x_from >= @width
+      ([x_from, 0].max..[x_to, @width - 1].min).each do |x|
+        updates[x] = @antialias_area if x >= 0 && x < @width
+      end
+    end
+    antialias_x_bounds.each do |x_bounds|
+      each_subtract_range x_bounds, subtract_bounds do |x_from_a, x_to_a|
+        x_from_a = x_from_a.clamp 0, @height * @antialias
+        x_to_a = x_to_a.clamp 0, @height * @antialias
+        x_from = x_from_a / @antialias
+        x_to = (x_to_a - 1) / @antialias
+        next if x_to < 0 || x_from >= @height
+
+        (x_from + 1..x_to - 1).each do |x|
+          updates[x] += @antialias
+        end
+        if x_from == x_to
+          updates[x_from] += x_to_a - x_from_a
+        else
+          updates[x_from] += @antialias - x_from_a % @antialias
+          updates[x_to] += (x_to_a - 1) % @antialias + 1
+        end
+      end
+    end
+    if @colors
+      updates.each do |x, count|
+        alpha = @alpha * count / @antialias_area
+        pixels_row[x] = pixels_row[x] * (1 - alpha) + @color * alpha
+      end
+    else
+      updates.each do |x, count|
+        alpha = @alpha * count / @antialias_area
+        col = pixels_row[x]
+        r = (col >> 16) & 0xff
+        g = (col >> 8) & 0xff
+        b = col & 0xff
+        r = r * (1 - alpha) + @r * alpha
+        g = g * (1 - alpha) + @g * alpha
+        b = b * (1 - alpha) + @b * alpha
+        pixels_row[x] = (r.round << 16) | (g.round << 8) | b.round
+      end
+    end
+  end
+
   def _stroke(points, radius)
     x_by_y = {}
     y_bounds = []
@@ -189,7 +302,6 @@ class Canvas
       pixel_y_set[y] = true if 0 <= y && y < @height
     end
     pixel_y_set.each_key do |pixel_y|
-      pixels_row = @pixels[pixel_y]
       antialias_x_bounds = @antialias.times.map do |i|
         target_y = pixel_y * @antialias + i
         x_bounds = []
@@ -213,55 +325,7 @@ class Canvas
         end
         compact_x_bounds
       end
-      subtract_bounds = []
-      updates = Hash.new 0
-      each_overlapped_range antialias_x_bounds.flatten, @antialias do |x_from_a, x_to_a|
-        x_from = (x_from_a + @antialias - 1) / @antialias
-        x_to = (x_to_a - @antialias) / @antialias
-        subtract_bounds << x_from * @antialias
-        subtract_bounds << (x_to + 1) * @antialias + 0.5
-        next if x_to < 0 || x_from >= @width
-        ([x_from, 0].max..[x_to, @width - 1].min).each do |x|
-          updates[x] = @antialias_area if x >= 0 && x < @width
-        end
-      end
-      antialias_x_bounds.each do |x_bounds|
-        each_subtract_range x_bounds, subtract_bounds do |x_from_a, x_to_a|
-          x_from_a = x_from_a.clamp 0, @height * @antialias
-          x_to_a = x_to_a.clamp 0, @height * @antialias
-          x_from = x_from_a / @antialias
-          x_to = (x_to_a - 1) / @antialias
-          next if x_to < 0 || x_from >= @height
-
-          (x_from + 1..x_to - 1).each do |x|
-            updates[x] += @antialias
-          end
-          if x_from == x_to
-            updates[x_from] += x_to_a - x_from_a
-          else
-            updates[x_from] += @antialias - x_from_a % @antialias
-            updates[x_to] += (x_to_a - 1) % @antialias + 1
-          end
-        end
-      end
-      if @colors
-        updates.each do |x, count|
-          alpha = @alpha * count / @antialias_area
-          pixels_row[x] = pixels_row[x] * (1 - alpha) + @color * alpha
-        end
-      else
-        updates.each do |x, count|
-          alpha = @alpha * count / @antialias_area
-          col = pixels_row[x]
-          r = (col >> 16) & 0xff
-          g = (col >> 8) & 0xff
-          b = col & 0xff
-          r = r * (1 - alpha) + @r * alpha
-          g = g * (1 - alpha) + @g * alpha
-          b = b * (1 - alpha) + @b * alpha
-          pixels_row[x] = (r.round << 16) | (g.round << 8) | b.round
-        end
-      end
+      _fill_antialias_bounds(pixel_y, antialias_x_bounds)
     end
   end
 

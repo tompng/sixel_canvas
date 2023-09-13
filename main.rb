@@ -25,5 +25,8 @@ loop do
   canvas.alpha = 0.8
   canvas.line [rand(200), rand(200)], [rand(200), rand(200)]
   canvas.bezier [rand(180), rand(180)], [100, rand(180)], [rand(180), 40], [160 + rand(200), 160 + rand(200)]
+  path = []
+  canvas._bezier_path([30, 30], [100, 280], [120, -40], [60, 220], path)
+  canvas._fill(path)
   puts Canvas::TERMINAL_CURSOR_RESET + canvas.to_sixel
 end
