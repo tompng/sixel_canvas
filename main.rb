@@ -18,20 +18,24 @@ loop do
   canvas.alpha = 0.5
   canvas.color = use_rgb ? rand(0xffffff) : 1.0
   canvas.line_width = 16
-  canvas.line [rand(200), rand(200)], [rand(200), rand(200)]
+  canvas.draw_line [rand(200), rand(200)], [rand(200), rand(200)]
   canvas.line_width = 2
   canvas.color = canvas.color = use_rgb ? rand(0xffffff) : 0.8
-  canvas.line [rand(200), rand(200)], [rand(200), rand(200)]
+  path = canvas.new_path do
+    move_to rand(200), rand(200)
+    line_to rand(200), rand(200)
+    line_to rand(200), rand(200)
+    line_to rand(200), rand(200)
+  end
   canvas.alpha = 0.8
-  canvas.line [rand(200), rand(200)], [rand(200), rand(200)]
-  canvas.bezier(*4.times.map { [rand(180), rand(180)] })
-  paths = []
+  canvas.stroke(path)
+
+  path = canvas.new_path
+  path.move_to rand(200), rand(200)
   4.times {
-    points = []
-    canvas._bezier_path(*4.times.map { [rand(180), rand(180)] }, points)
-    paths << points
+    path.bezier_curve_to(*6.times.map { rand(180) })
   }
   canvas.alpha = 0.4
-  canvas._fill(paths)
+  canvas.fill(path)
   puts Canvas::TERMINAL_CURSOR_RESET + canvas.to_sixel
 end

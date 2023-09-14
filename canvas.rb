@@ -1,5 +1,77 @@
 require_relative 'sixel'
 
+class Path
+  attr_reader :dot_points, :paths
+  def initialize(canvas, &block)
+    @current_path = []
+    @dot_points = []
+    @paths = [@current_path]
+    @canvas = canvas
+    @x = @y = nil
+    instance_exec(&block) if block
+  end
+
+  def dot(x, y)
+    @dot_points << [x, y]
+    self
+  end
+
+  def dots(points)
+    @dot_points.concat points
+    self
+  end
+
+  def polygon(points)
+    return self if points.empty?
+
+    prev = points.first
+    move_to(*prev)
+    (1...points.size).each do |i|
+      p = points[i]
+      @canvas._line_path prev, p, @current_path
+      prev = p
+    end
+    @x, @y = prev
+    self
+  end
+
+  def line_to(x, y)
+    return self unless @x && @y
+
+    @canvas._line_path [@x, @y], [x, y], @current_path
+    @x = x
+    @y = y
+    self
+  end
+
+  def bezier_curve_to(x1, y1, x2, y2, x3, y3)
+    return self unless @x && @y
+
+    @canvas._bezier_path [@x, @y], [x1, y1], [x2, y2], [x3, y3], @current_path
+    @x = x3
+    @y = y3
+    self
+  end
+
+  def move_to(x, y)
+    return self if @x == x && @y == y
+
+    @x = x
+    @y = y
+    return self if @current_path.empty?
+
+    @paths << @current_path = []
+    self
+  end
+
+  def close
+    return self if @current_path.empty?
+
+    @paths << @current_path = []
+    self
+  end
+end
+
 class Canvas
   TERMINAL_CLEAR_SCREEN = "\e[H\e[2J"
   TERMINAL_CURSOR_RESET = "\e[H"
@@ -21,6 +93,10 @@ class Canvas
     @pixels = @height.times.map do
       [@colors ? 0.0 : 0] * @width
     end
+  end
+
+  def new_path(&block)
+    Path.new self, &block
   end
 
   def clear(color = 0, alpha: 1)
@@ -70,11 +146,11 @@ class Canvas
     @line_width = [1, line_width].max
   end
 
-  def bezier(a, b, c, d)
-    points = []
-    _bezier_path a, b, c, d, points
-    _stroke points, @line_width * @antialias / 2
-  end
+  # def bezier(a, b, c, d)
+  #   points = []
+  #   _bezier_path a, b, c, d, points
+  #   _stroke points, @line_width * @antialias / 2
+  # end
 
   def _bezier_path(pa, pb, pc, pd, points)
     ax, ay = pa.map { _1 * @antialias }
@@ -102,18 +178,8 @@ class Canvas
     end
   end
 
-  def line(p1, p2)
-    points = []
-    _line_path p1, p2, points
-    _stroke points, @line_width * @antialias / 2
-  end
-
-  def polygon(points)
-    render_points = []
-    points.each_cons(2) do |p1, p2|
-      _line_path p1, p2, render_points
-    end
-    _stroke render_points, @line_width * @antialias / 2
+  def draw_line(p1, p2)
+    stroke new_path.move_to(*p1).line_to(*p2)
   end
 
   def _line_path(p1, p2, points)
@@ -195,14 +261,14 @@ class Canvas
     ranges
   end
 
-  def _fill(paths)
+  def fill(path)
     row_xor_bounds_a = {}
-    paths.each do |points|
+    path.paths.each do |points|
       dedup_points = []
       points.each do |p|
         dedup_points << p if dedup_points.last != p
       end
-      dedup_points.pop while dedup_points.first == dedup_points.last
+      dedup_points.pop while !dedup_points.empty? && dedup_points.first == dedup_points.last
       next if dedup_points.empty?
 
       dedup_points.size.times do |i|
@@ -291,15 +357,21 @@ class Canvas
     end
   end
 
-  def _stroke(points, radius)
+  def stroke(path)
     x_by_y = {}
     y_bounds = []
+    radius = @line_width * @antialias / 2.0
     radius_i = radius.ceil
-    points.each do |x, y|
-      (x_by_y[y] ||= {})[x] = true
-      y_bounds << y - radius_i
-      y_bounds << y + radius_i + 0.5
+    add_bounds = -> points do
+      points.each do |x, y|
+        (x_by_y[y] ||= {})[x] = true
+        y_bounds << y - radius_i
+        y_bounds << y + radius_i + 0.5
+      end
     end
+    add_bounds.call path.dot_points
+    path.paths.each(&add_bounds)
+
     pixel_y_set = {}
     each_merged_range_value y_bounds do |target_y|
       y = target_y / @antialias
