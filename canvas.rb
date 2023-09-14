@@ -241,9 +241,10 @@ class Canvas
     each_overlapped_range antialias_x_bounds.flatten, @antialias do |x_from_a, x_to_a|
       x_from = (x_from_a + @antialias - 1) / @antialias
       x_to = (x_to_a - @antialias) / @antialias
+      next if x_to < 0 || x_from >= @width || x_from >= x_to
+
       subtract_bounds << x_from * @antialias
       subtract_bounds << (x_to + 1) * @antialias + 0.5
-      next if x_to < 0 || x_from >= @width
       ([x_from, 0].max..[x_to, @width - 1].min).each do |x|
         updates[x] = @antialias_area if x >= 0 && x < @width
       end
@@ -319,9 +320,13 @@ class Canvas
           end
         end
         compact_x_bounds = []
-        each_overlapped_range x_bounds do
-          compact_x_bounds << _1
-          compact_x_bounds << _2 + 0.5
+        each_overlapped_range x_bounds do |from, to|
+          if compact_x_bounds.last&.> from
+            compact_x_bounds.pop
+          else
+            compact_x_bounds << from
+          end
+          compact_x_bounds << to + 0.5
         end
         compact_x_bounds
       end
