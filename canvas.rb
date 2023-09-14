@@ -195,29 +195,31 @@ class Canvas
     ranges
   end
 
-  def _fill(points)
+  def _fill(paths)
     row_xor_bounds_a = {}
-    dedup_points = []
-    points.each do |p|
-      dedup_points << p if dedup_points.last != p
-    end
-    dedup_points.pop while dedup_points.first == dedup_points.last
-    return if dedup_points.empty?
-
-    dedup_points.size.times do |i|
-      x1, y1 = dedup_points[i - 1]
-      x2, y2 = dedup_points[i]
-      step = (y2 - y1).abs
-      (1...step).each do |j|
-        c1 = 2 * (step - j)
-        c2 = 2 * j
-        x = (c1 * x1 + c2 * x2 + step) / step / 2
-        y = (c1 * y1 + c2 * y2 + step) / step / 2
-        (row_xor_bounds_a[y] ||= []) << x
+    paths.each do |points|
+      dedup_points = []
+      points.each do |p|
+        dedup_points << p if dedup_points.last != p
       end
-      x0, y0 = dedup_points[i - 2]
-      if (y0 != y1 || y1 != y2) && ((y1 - y0) * (y2 - y1) > 0 || (y0 == y1 && ((x0 < x1) ^ (y1 < y2))) || (y1 == y2 && ((x1 > x2) ^ (y0 < y1))))
-        (row_xor_bounds_a[y1] ||= []) << x1
+      dedup_points.pop while dedup_points.first == dedup_points.last
+      next if dedup_points.empty?
+
+      dedup_points.size.times do |i|
+        x1, y1 = dedup_points[i - 1]
+        x2, y2 = dedup_points[i]
+        step = (y2 - y1).abs
+        (1...step).each do |j|
+          c1 = 2 * (step - j)
+          c2 = 2 * j
+          x = (c1 * x1 + c2 * x2 + step) / step / 2
+          y = (c1 * y1 + c2 * y2 + step) / step / 2
+          (row_xor_bounds_a[y] ||= []) << x
+        end
+        x0, y0 = dedup_points[i - 2]
+        if (y0 != y1 || y1 != y2) && ((y1 - y0) * (y2 - y1) > 0 || (y0 == y1 && ((x0 < x1) ^ (y1 < y2))) || (y1 == y2 && ((x1 > x2) ^ (y0 < y1))))
+          (row_xor_bounds_a[y1] ||= []) << x1
+        end
       end
     end
     row_bounds = {}
@@ -230,6 +232,7 @@ class Canvas
       (row_bounds[y_a / @antialias] ||= []) << x_bounds
     end
     row_bounds.each do |pixel_y, antialias_x_bounds|
+      next if pixel_y < 0 || pixel_y >= @height
       _fill_antialias_bounds(pixel_y, antialias_x_bounds)
     end
   end
