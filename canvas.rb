@@ -22,6 +22,18 @@ class Path
     self
   end
 
+  def curve(points, line_width = @line_width)
+    return self if points.empty?
+    xfirst, yfirst, wfirst = points.first
+    move_to xfirst, yfirst, wfirst || line_width
+    points_with_width = points.map do |x, y, w|
+      [x, y, w || line_width]
+    end
+    @canvas._curve_path points_with_width , @current_path
+    xlast, ylast, wlast = points.first
+    @x, @y, @line_width = xlast, ylast, wlast || line_width
+  end
+
   def polygon(points, line_width = @line_width)
     return self if points.empty?
 
@@ -147,6 +159,48 @@ class Canvas
       g = (c >> 8) & 0xff
       b = c & 0xff
       [r, g, b, 0]
+    end
+  end
+
+  def _curve_path(points, output)
+    n = points.size
+    a = [4] * n
+    a[0] = a[-1] = 2
+    vx = []
+    vy = []
+    vw = []
+    n.times.map do |i|
+      px, py, pw = points[[i - 1, 0].max]
+      nx, ny, nw = points[[i + 1, n - 1].min]
+      vx << (nx - px) / 3.0
+      vy << (ny - py) / 3.0
+      vw << (nw - pw) / 3.0
+    end
+    (n - 1).times do |i|
+      b = 1.0 / a[i]
+      vx[i + 1] -= vx[i] * b
+      vy[i + 1] -= vy[i] * b
+      vw[i + 1] -= vw[i] * b
+      a[i + 1] -= b
+    end
+    (n - 1).downto(1) do |i|
+      vx[i - 1] -= vx[i].fdiv a[i]
+      vy[i - 1] -= vy[i].fdiv a[i]
+      vw[i - 1] -= vw[i].fdiv a[i]
+    end
+    dx, dy, dw = [vx, vy, vw].map do |v|
+      v.zip(a).map { _1.fdiv _2 }
+    end
+    (n - 1).times do |i|
+      x0, y0, w0 = p0 = points[i]
+      x1, y1, w1 = p1 = points[i + 1]
+      _bezier_path(
+        p0,
+        [x0 + vx[i], y0 + vy[i], w0 + vw[i]],
+        [x1 - vx[i + 1], y1 - vy[i + 1], w1 - vw[i + 1]],
+        p1,
+        output
+      )
     end
   end
 
