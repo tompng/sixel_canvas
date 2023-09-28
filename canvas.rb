@@ -13,12 +13,14 @@ class Path
   end
 
   def dot(x, y, radius = @line_width / 2.0)
-    @dot_points << [x, y, 2.0 * radius]
+    antialias = @canvas.antialias
+    @dot_points << [(x * antialias).round, (y * antialias).round, 2.0 * radius * antialias]
     self
   end
 
   def dots(points, radius = @line_width / 2.0)
-    @dot_points.concat points.map { |x, y, r| [x, y, (r || radius) * 2.0] }
+    antialias = @canvas.antialias
+    @dot_points.concat points.map { |x, y, r| [(x * antialias).round, (y * antialias).round, 2.0 * (r || radius) * antialias] }
     self
   end
 
@@ -102,7 +104,7 @@ class Canvas
   TERMINAL_CLEAR_SCREEN = "\e[H\e[2J"
   TERMINAL_CURSOR_RESET = "\e[H"
 
-  attr_reader :width, :height, :pixels, :color
+  attr_reader :width, :height, :pixels, :color, :antialias
   def initialize(width, height, colors: nil, antialias: 3)
     @width = width
     @height = height
