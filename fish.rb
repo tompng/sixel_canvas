@@ -1,12 +1,19 @@
-
+require_relative 'sixel'
 include Math
 def fish(x,y,t)
   [
     y*y-((1.5+x)/16*((1-x)**3+1/16.0+(2+cos(t)**2)/(1+exp(-32*y*cos(t)))/(1+exp(6-8*x))))**2*(1-x*x),h(x,y,t)
   ].min
 end
-$a = 39.6
-$wtime = 1.35
+$a = 0
+$wtime = 0
+def update(d)
+  amax = 64*PI
+  wmax = 16
+  $a = ($a + amax * d / 3) % amax
+  $wtime = ($wtime + wmax * d) % wmax
+end
+
 def wfin(x,t) = (1.5+x)*sin(4*x-4+(x-1)**2/2-t)/16
 def wgrad(x,t) = (wfin(x+0.001,t)-wfin(x-0.001,t))/0.002
 def h(x,y,t) = [g(x,y,0.5+(sin(t)+cos(t))/8,-1.0),g(x,y,-0.5-(sin(t)+cos(t))/8,+1.0)].min
@@ -51,21 +58,49 @@ def fill_poi_outer(x,y) = poi_outer(x-x_poi,y-y_poi)<0
 def poi_under_dx(x,y) = -wavex(x,y,$wtime%8)*poi_z(x,y)/12
 def poi_under_dy(x,y) = -wavey(x,y,$wtime%8)*poi_z(x,y)/12
 
-
-100.times do |iy|
-  row = 100.times.map do |ix|
-    x = ix/100.0*8-4
-    y = 4-iy/100.0*8
-    next '~~' if fill_wave(x,y)
-    pz = poi_z(x,y)
-    col = if poi_z(x,y)>0
-      fill_poi_inner(x,y) ? '--' : fill_poi_outer(x,y) ? '##' : '  '
-    else
-      dx = poi_under_dx(x,y)
-      dy = poi_under_dy(x,y)
-      fill_poi_inner(x+dx,y+dy) ? '::' : fill_poi_outer(x+dx,y+dy) ? '88' : '  '
+colors = [
+  [255,0,0,1],
+  [50,50,50,0.4],
+  [50,50,50,1],
+  [100,100,100,0.25],
+  [100,100,100,0.4],
+  [100,100,100,1],
+]
+color_table = 64.times.map do |i|
+  c = colors.size.times.select { (i >> _1) & 1 == 1}.map { colors[_1] }
+  r,g,b=c.reduce([0,0,0]){|rgb,(*rgb2,a)|
+    rgb.zip(rgb2).map{_1*(1-a)+_2*a}
+  }
+  (r.to_i << 16 | g.to_i << 8 | b.to_i)
+end
+size = 128
+$><< "\e[H\e[2J"
+loop do
+  image = size.times.map do |iy|
+    row = size.times.map do |ix|
+      x = 8.0*ix/size-4
+      y = 4-8.0*iy/size
+      color = 0
+      color |= 1 if fill_fish(x,y)
+      color |= 8 if fill_wave(x,y)
+      if poi_z(x,y)>0
+        if fill_poi_inner(x,y)
+          color |= 16
+        elsif fill_poi_outer(x,y)
+          color = 32
+        end
+      else
+        dx = poi_under_dx(x,y)
+        dy = poi_under_dy(x,y)
+        if fill_poi_inner(x+dx,y+dy)
+          color |= 2
+        elsif fill_poi_outer(x+dx,y+dy)
+          color |= 4
+        end
+      end
+      color
     end
-    col != '  ' ? col : fill_fish(x,y) ? '##' : '  '
   end
-  puts row.join
+  update(0.01)
+  puts "\e[H" + Sixel.build(image, color_table)
 end
