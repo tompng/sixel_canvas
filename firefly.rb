@@ -53,6 +53,5 @@ loop do
       path.stroke(color: 1, alpha: col)
     end
   end
-  
   puts Canvas::TERMINAL_CURSOR_RESET + canvas.to_sixel
 end
